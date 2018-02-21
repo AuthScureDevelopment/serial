@@ -8,7 +8,10 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"strings"
 	"time"
+
+	qs "github.com/AuthScureDevelopment/exp-modem2phone/question"
 )
 
 // End of line character (AKA EOL), newline character (ASCII 10, CR, '\n'). is used by default.
@@ -343,31 +346,66 @@ func posixTimeoutValues(readTimeout time.Duration) (vmin uint8, vtime uint8) {
 	return minBytesToRead, uint8(readTimeoutInDeci)
 }
 
-func (sp *SerialPort) ReadResponseFromDevice() (string, error) {
+// New Development
+func (sp *SerialPort) ReadResponseFromDevice() error {
 	screenBuff := make([]byte, 0)
 	var lastRxByte byte
-
 	for {
 		if sp.portIsOpen {
 			lastRxByte = <-sp.rxChar
 			// Print received lines
-			var response string
 			switch lastRxByte {
 			case sp.eol:
-				response = string(append(screenBuff, lastRxByte))
-				fmt.Println("Response:", response)
+				// EOL - Print received data
+				var Output string
+				sp.log("Rx << %s", string(append(screenBuff, lastRxByte)))
+				if strings.ContainsAny(string(append(screenBuff, lastRxByte)), "CLIP") {
+					Output = string(append(screenBuff, lastRxByte))
+
+					if len(Output) > 15 {
+						number := ShortNumber(Output)
+						phonenumbermodem := qs.GetCommandRedis("GET", number)
+						phonenumberuserontemp := qs.GetCommandRedis("GET", "authmc-"+phonenumbermodem)
+						if number == phonenumberuserontemp {
+							qs.GetCommandRedis("PERSIST", number)
+							qs.GetCommandRedis("PERSIST", phonenumbermodem)
+							qs.GetCommandRedis("PERSIST", "authmc-"+phonenumbermodem)
+							time.Sleep(time.Second * 1)
+							sp.Call(number)
+							// Delete data in redis for modem phone number whitch value on
+							qs.GetCommandRedis("DEL", phonenumbermodem)
+
+							// Delete data in redis for modem phonen number by user phone number
+							qs.GetCommandRedis("DEL", number)
+
+							// Delete data in redis for user phone number by modem phone number
+							qs.GetCommandRedis("DEL", "authmc-"+phonenumbermodem)
+						} else {
+							sp.HangUp()
+						}
+					} else {
+						// Will execute if phone number user is not found in redis db
+						fmt.Println("There is not number in temporari")
+					}
+				}
+
 				screenBuff = make([]byte, 0) //Clean buffer
-				// if strings.ContainsAny(response, `+CLIP: "`) {
-				// 	fmt.Println("Hello jihar", response)
-				// 	// return response, nil
-				// }
-				continue
+				break
 			default:
+
 				screenBuff = append(screenBuff, lastRxByte)
 			}
 		} else {
 			break
 		}
 	}
-	return "", nil
+
+	return nil
+}
+
+func ShortNumber(number string) string {
+	re := regexp.MustCompile("[0-9]+")
+	data := re.FindAllString(strings.Replace(number, `,`, "", -1), -1)
+	result := (strings.Join(data[:1], ""))
+	return result
 }
