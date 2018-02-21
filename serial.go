@@ -39,7 +39,7 @@ type SerialPort struct {
 
 func New() *SerialPort {
 	// Create new file
-	file, err := os.OpenFile(fmt.Sprintf("log_serial_%d.txt", time.Now().Unix()), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	file, err := os.OpenFile(fmt.Sprintf("logs/log_serial_%d.txt", time.Now().Unix()), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		log.Fatalln("Failed to open log file", ":", err)
 	}
@@ -76,7 +76,8 @@ func (sp *SerialPort) Open(name string, baud int, timeout ...time.Duration) erro
 	sp.rxChar = make(chan byte)
 	// Enable threads
 	go sp.readSerialPort()
-	go sp.processSerialPort()
+	// go sp.processSerialPort()
+	go sp.ReadResponseFromDevice()
 	sp.logger.SetPrefix(fmt.Sprintf("[%s] ", sp.name))
 	sp.log("Serial port %s@%d open", sp.name, sp.baud)
 	return nil
@@ -340,4 +341,33 @@ func posixTimeoutValues(readTimeout time.Duration) (vmin uint8, vtime uint8) {
 		}
 	}
 	return minBytesToRead, uint8(readTimeoutInDeci)
+}
+
+func (sp *SerialPort) ReadResponseFromDevice() (string, error) {
+	screenBuff := make([]byte, 0)
+	var lastRxByte byte
+
+	for {
+		if sp.portIsOpen {
+			lastRxByte = <-sp.rxChar
+			// Print received lines
+			var response string
+			switch lastRxByte {
+			case sp.eol:
+				response = string(append(screenBuff, lastRxByte))
+				fmt.Println("Response:", response)
+				screenBuff = make([]byte, 0) //Clean buffer
+				// if strings.ContainsAny(response, `+CLIP: "`) {
+				// 	fmt.Println("Hello jihar", response)
+				// 	// return response, nil
+				// }
+				continue
+			default:
+				screenBuff = append(screenBuff, lastRxByte)
+			}
+		} else {
+			break
+		}
+	}
+	return "", nil
 }
