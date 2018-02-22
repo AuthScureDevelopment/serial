@@ -8,10 +8,7 @@ import (
 	"log"
 	"os"
 	"regexp"
-	"strings"
 	"time"
-
-	qs "github.com/AuthScureDevelopment/exp-modem2phone/question"
 )
 
 // End of line character (AKA EOL), newline character (ASCII 10, CR, '\n'). is used by default.
@@ -79,8 +76,8 @@ func (sp *SerialPort) Open(name string, baud int, timeout ...time.Duration) erro
 	sp.rxChar = make(chan byte)
 	// Enable threads
 	go sp.readSerialPort()
-	// go sp.processSerialPort()
-	go sp.ReadResponseFromDevice()
+	go sp.ProcessSerialPort()
+	// go sp.ReadResponseFromDevice()
 	sp.logger.SetPrefix(fmt.Sprintf("[%s] ", sp.name))
 	sp.log("Serial port %s@%d open", sp.name, sp.baud)
 	return nil
@@ -279,7 +276,7 @@ func (sp *SerialPort) readSerialPort() {
 	}
 }
 
-func (sp *SerialPort) processSerialPort() {
+func (sp *SerialPort) ProcessSerialPort() (string, error) {
 	screenBuff := make([]byte, 0)
 	var lastRxByte byte
 	for {
@@ -288,17 +285,17 @@ func (sp *SerialPort) processSerialPort() {
 			// Print received lines
 			switch lastRxByte {
 			case sp.eol:
-				// EOL - Print received data
-				sp.log("Rx << %s", string(append(screenBuff, lastRxByte)))
-				screenBuff = make([]byte, 0) //Clean buffer
-				break
+				for {
+					return string(append(screenBuff, lastRxByte)), nil
+				}
 			default:
 				screenBuff = append(screenBuff, lastRxByte)
 			}
 		} else {
-			break
+			// break
 		}
 	}
+	return string(append(screenBuff, lastRxByte)), nil
 }
 
 func (sp *SerialPort) log(format string, a ...interface{}) {
@@ -344,68 +341,4 @@ func posixTimeoutValues(readTimeout time.Duration) (vmin uint8, vtime uint8) {
 		}
 	}
 	return minBytesToRead, uint8(readTimeoutInDeci)
-}
-
-// New Development
-func (sp *SerialPort) ReadResponseFromDevice() error {
-	screenBuff := make([]byte, 0)
-	var lastRxByte byte
-	for {
-		if sp.portIsOpen {
-			lastRxByte = <-sp.rxChar
-			// Print received lines
-			switch lastRxByte {
-			case sp.eol:
-				// EOL - Print received data
-				var Output string
-				sp.log("Rx << %s", string(append(screenBuff, lastRxByte)))
-				if strings.ContainsAny(string(append(screenBuff, lastRxByte)), "CLIP") {
-					Output = string(append(screenBuff, lastRxByte))
-
-					if len(Output) > 15 {
-						number := ShortNumber(Output)
-						phonenumbermodem := qs.GetCommandRedis("GET", number)
-						phonenumberuserontemp := qs.GetCommandRedis("GET", "authmc-"+phonenumbermodem)
-						if number == phonenumberuserontemp {
-							qs.GetCommandRedis("PERSIST", number)
-							qs.GetCommandRedis("PERSIST", phonenumbermodem)
-							qs.GetCommandRedis("PERSIST", "authmc-"+phonenumbermodem)
-							time.Sleep(time.Second * 1)
-							sp.Call(number)
-							// Delete data in redis for modem phone number whitch value on
-							qs.GetCommandRedis("DEL", phonenumbermodem)
-
-							// Delete data in redis for modem phonen number by user phone number
-							qs.GetCommandRedis("DEL", number)
-
-							// Delete data in redis for user phone number by modem phone number
-							qs.GetCommandRedis("DEL", "authmc-"+phonenumbermodem)
-						} else {
-							sp.HangUp()
-						}
-					} else {
-						// Will execute if phone number user is not found in redis db
-						fmt.Println("There is not number in temporari")
-					}
-				}
-
-				screenBuff = make([]byte, 0) //Clean buffer
-				break
-			default:
-
-				screenBuff = append(screenBuff, lastRxByte)
-			}
-		} else {
-			break
-		}
-	}
-
-	return nil
-}
-
-func ShortNumber(number string) string {
-	re := regexp.MustCompile("[0-9]+")
-	data := re.FindAllString(strings.Replace(number, `,`, "", -1), -1)
-	result := (strings.Join(data[:1], ""))
-	return result
 }
