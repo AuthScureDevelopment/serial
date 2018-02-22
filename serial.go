@@ -77,7 +77,6 @@ func (sp *SerialPort) Open(name string, baud int, timeout ...time.Duration) erro
 	// Enable threads
 	go sp.readSerialPort()
 	go sp.ProcessSerialPort()
-	// go sp.ReadResponseFromDevice()
 	sp.logger.SetPrefix(fmt.Sprintf("[%s] ", sp.name))
 	sp.log("Serial port %s@%d open", sp.name, sp.baud)
 	return nil
@@ -280,19 +279,17 @@ func (sp *SerialPort) ProcessSerialPort() (string, error) {
 	screenBuff := make([]byte, 0)
 	var lastRxByte byte
 	for {
-		if sp.portIsOpen {
-			lastRxByte = <-sp.rxChar
-			// Print received lines
-			switch lastRxByte {
-			case sp.eol:
-				for {
-					return string(append(screenBuff, lastRxByte)), nil
-				}
-			default:
-				screenBuff = append(screenBuff, lastRxByte)
+		if !sp.portIsOpen {
+			return "", fmt.Errorf("Port is not open")
+		}
+		lastRxByte = <-sp.rxChar
+		switch lastRxByte {
+		case sp.eol:
+			for {
+				return string(append(screenBuff, lastRxByte)), nil
 			}
-		} else {
-			// break
+		default:
+			screenBuff = append(screenBuff, lastRxByte)
 		}
 	}
 	return string(append(screenBuff, lastRxByte)), nil
